@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wp-readme-doctor"
+version = "1.0.0"
+description = "Offline validator for a WordPress plugin readme.txt"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+
+[project.scripts]
+wp-readme-doctor = "wp_readme_doctor:main"
+
+[tool.setuptools]
+py-modules = ["wp_readme_doctor"]
