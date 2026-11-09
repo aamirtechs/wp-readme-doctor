@@ -1,4 +1,5 @@
 # wp-readme-doctor
+**Live tool:** https://aamirtechs.github.io/wp-readme-doctor/ (runs in your browser, no install)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/aamirtechs/wp-readme-doctor/blob/main/LICENSE) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/aamirtechs/wp-readme-doctor/issues)
 

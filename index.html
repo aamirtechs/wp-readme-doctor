@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wp-readme-doctor by AamirTechs</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f6f8fb; color: #1c2733; }
+header { background: #0b1f3a; color: #ffffff; padding: 28px 20px 22px; border-bottom: 4px solid #d4a72c; }
+header .wrap, main, footer .wrap { max-width: 880px; margin: 0 auto; }
+header h1 { margin: 0 0 6px; font-size: 28px; }
+header p { margin: 0; color: #c9d6e8; font-size: 15px; }
+main { padding: 24px 20px 8px; }
+.card { background: #ffffff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(11, 31, 58, 0.12); }
+label { display: block; font-weight: 600; margin: 14px 0 6px; font-size: 14px; }
+label:first-child { margin-top: 0; }
+textarea { width: 100%; min-height: 180px; padding: 10px; border: 1px solid #c3cedd; border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+input[type="text"], input[type="number"], input[type="date"], select { padding: 8px 10px; border: 1px solid #c3cedd; border-radius: 8px; font-size: 14px; background: #ffffff; }
+.controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+.controls .field label { margin-top: 0; }
+.checkline { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; padding-bottom: 9px; }
+.checkline input { width: 16px; height: 16px; }
+.buttons { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 10px; }
+button { border: 0; border-radius: 8px; padding: 10px 18px; font-size: 14px; font-weight: 600; cursor: pointer; }
+button.primary { background: #0b1f3a; color: #ffffff; }
+button.primary:hover { background: #14315c; }
+button.secondary { background: #eef2f8; color: #0b1f3a; border: 1px solid #c3cedd; }
+button.accent { background: #d4a72c; color: #0b1f3a; }
+pre { background: #0b1f3a; color: #e8eef7; border-radius: 8px; padding: 14px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; font-size: 13px; min-height: 60px; }
+.hint { font-size: 13px; color: #5a6b82; margin-top: 6px; }
+footer { padding: 18px 20px 30px; color: #5a6b82; font-size: 13px; }
+footer a { color: #0b1f3a; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>wp-readme-doctor</h1>
+    <p>Validate a WordPress plugin readme.txt against wordpress.org rules.</p>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <label for="file">Choose a file</label>
+    <input type="file" id="file" accept=".txt,text/plain">
+    <label for="input">Or paste the readme.txt content</label>
+    <textarea id="input" placeholder="=== Plugin Name ===&#10;Contributors: ...&#10;Tags: ..."></textarea>
+
+    <div class="controls" style="margin-top:14px;">
+      <div class="checkline">
+        <input type="checkbox" id="opt-strict">
+        <label for="opt-strict" style="margin:0;">Strict (treat warnings as errors)</label>
+      </div>
+    </div>
+    <div class="buttons">
+      <button type="button" class="primary" id="run">Run</button>
+      <button type="button" class="secondary" id="sample">Load sample</button>
+      <button type="button" class="accent" id="download" disabled>Download report</button>
+    </div>
+    <label for="output">Report</label>
+    <pre id="output">Your report will appear here.</pre>
+    <p class="hint">The web version checks the readme text alone. The CLI screenshot file check needs a local screenshots folder, so it is not included here.</p>
+  </div>
+</main>
+<footer>
+  <div class="wrap">
+    <p>Built by AamirTechs. <a href="https://aamirtechs.github.io/">All tools</a> | <a href="https://github.com/aamirtechs/wp-readme-doctor">Source</a></p>
+    <p>Privacy: this tool runs 100% in your browser. Nothing is uploaded.</p>
+  </div>
+</footer>
+<script id="core">
+// wp-readme-doctor core logic: a faithful port of wp_readme_doctor.py,
+// covering the readme text checks only (the Python CLI screenshot file
+// check needs a local directory, so it is not part of the web version).
+// Pure functions only, no DOM access.
+// window.runTool(inputText, options) returns the CLI text report.
+// options: { strict: false (treat warnings as errors) }
+"use strict";
+
+var VERSION_RE = /^\d+(\.\d+)*$/;
+var PLUGIN_NAME_RE = /^===\s*(.+?)\s*===\s*$/;
+var SECTION_RE = /^==\s*(.+?)\s*==\s*$/;
+var SUBSECTION_RE = /^=\s*(.+?)\s*=\s*$/;
+var SCREENSHOT_RE = /^(\d+)\.\s+\S/;
+var REQUIRED_HEADERS = ["Contributors", "Requires at least", "Tested up to", "Stable tag", "License"];
+var MAX_TAGS = 12;
+var MAX_LINE_LENGTH = 1000;
+
+function pyRepr(value) {
+  if (value === null || value === undefined) return "None";
+  var s = String(value);
+  var quote = "'";
+  if (s.indexOf("'") !== -1 && s.indexOf('"') === -1) quote = '"';
+  var out = quote;
+  for (var i = 0; i < s.length; i++) {
+    var ch = s.charAt(i);
+    var code = s.charCodeAt(i);
+    if (ch === "\\") out += "\\\\";
+    else if (ch === quote) out += "\\" + quote;
+    else if (ch === "\n") out += "\\n";
+    else if (ch === "\r") out += "\\r";
+    else if (ch === "\t") out += "\\t";
+    else if (code < 32 || code === 127) {
+      var hex = code.toString(16);
+      out += "\\x" + (hex.length < 2 ? "0" + hex : hex);
+    } else out += ch;
+  }
+  return out + quote;
+}
+
+function Finding(rule, severity, message) {
+  return { rule: rule, severity: severity, message: message };
+}
+function errorF(rule, message) { return Finding(rule, "error", message); }
+function warningF(rule, message) { return Finding(rule, "warning", message); }
+
+function parseVersion(text) {
+  if (typeof text !== "string") return null;
+  var t = text.trim();
+  if (!VERSION_RE.test(t)) return null;
+  return t.split(".").map(function(p) { return parseInt(p, 10); });
+}
+
+function versionKey(version) {
+  var key = version.slice();
+  while (key.length < 3) key.push(0);
+  return key;
+}
+
+function compareKeys(a, b) {
+  var n = Math.max(a.length, b.length);
+  for (var i = 0; i < n; i++) {
+    var x = i < a.length ? a[i] : 0;
+    var y = i < b.length ? b[i] : 0;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+function normalizeVersion(text) {
+  if (typeof text !== "string") return text;
+  return text.trim().replace(/^[vV]+/, "");
+}
+
+function parseReadme(text) {
+  var readme = {
+    text: text,
+    lines: String(text).split(/\r\n|\r|\n/),
+    plugin_name: null,
+    headers: {},
+    headerKeys: [],
+    sections: {},
+    section_order: []
+  };
+  var inHeader = false;
+  var current = null;
+  readme.lines.forEach(function(line) {
+    var stripped = line.trim();
+    var nameMatch = PLUGIN_NAME_RE.exec(stripped);
+    if (nameMatch && readme.plugin_name === null && current === null) {
+      readme.plugin_name = nameMatch[1].trim();
+      inHeader = true;
+      return;
+    }
+    var sectionMatch = SECTION_RE.exec(stripped);
+    if (sectionMatch) {
+      inHeader = false;
+      current = sectionMatch[1].trim();
+      if (!(current in readme.sections)) {
+        readme.sections[current] = [];
+        readme.section_order.push(current);
+      }
+      return;
+    }
+    if (inHeader && line.indexOf(":") !== -1) {
+      var idx = line.indexOf(":");
+      var key = line.slice(0, idx).trim();
+      if (key) {
+        if (!(key in readme.headers)) readme.headerKeys.push(key);
+        readme.headers[key] = line.slice(idx + 1).trim();
+      }
+      return;
+    }
+    if (current !== null) {
+      readme.sections[current].push(line);
+    }
+  });
+  return readme;
+}
+
+function headerOf(readme, canonical) {
+  for (var i = 0; i < readme.headerKeys.length; i++) {
+    var key = readme.headerKeys[i];
+    if (key.toLowerCase() === canonical.toLowerCase()) return readme.headers[key];
+  }
+  return null;
+}
+
+function sectionText(readme, name) {
+  var keys = Object.keys(readme.sections);
+  for (var i = 0; i < keys.length; i++) {
+    if (keys[i].toLowerCase() === name.toLowerCase()) {
+      return readme.sections[keys[i]].join("\n");
+    }
+  }
+  return null;
+}
+
+function sectionIsEmpty(readme, name) {
+  var text = sectionText(readme, name);
+  if (text === null) return true;
+  return !text.trim();
+}
+
+function changelogVersions(readme) {
+  var text = sectionText(readme, "Changelog");
+  if (text === null) return [];
+  var versions = [];
+  text.split(/\r\n|\r|\n/).forEach(function(line) {
+    var match = SUBSECTION_RE.exec(line.trim());
+    if (match) versions.push(match[1].trim());
+  });
+  return versions;
+}
+
+function screenshotNumbers(readme) {
+  var text = sectionText(readme, "Screenshots");
+  if (text === null) return [];
+  var numbers = [];
+  text.split(/\r\n|\r|\n/).forEach(function(line) {
+    var match = SCREENSHOT_RE.exec(line.trim());
+    if (match) numbers.push(parseInt(match[1], 10));
+  });
+  return numbers;
+}
+
+function checkPluginName(readme) {
+  if (readme.plugin_name === null) {
+    return [errorF("plugin-name", "readme does not start with an '=== Plugin Name ===' line")];
+  }
+  return [];
+}
+
+function checkHeaders(readme) {
+  var findings = [];
+  REQUIRED_HEADERS.forEach(function(name) {
+    var value = headerOf(readme, name);
+    if (value === null || !value) {
+      findings.push(errorF("missing-header", "required header '" + name + "' is missing or empty"));
+    }
+  });
+  if (headerOf(readme, "Requires PHP") === null) {
+    findings.push(warningF("missing-header", "recommended header 'Requires PHP' is missing"));
+  }
+  if (headerOf(readme, "License URI") === null && headerOf(readme, "License")) {
+    findings.push(warningF("missing-header", "header 'License URI' is missing"));
+  }
+  var licenseUri = headerOf(readme, "License URI");
+  if (licenseUri) {
+    var lowered = licenseUri.toLowerCase();
+    if (lowered.indexOf("http://") !== 0 && lowered.indexOf("https://") !== 0) {
+      findings.push(warningF("license-uri", "'License URI' does not look like a URL: " + pyRepr(licenseUri)));
+    }
+  }
+  return findings;
+}
+
+function checkVersions(readme) {
+  var findings = [];
+  var requires = headerOf(readme, "Requires at least");
+  var tested = headerOf(readme, "Tested up to");
+  var requiresV = requires ? parseVersion(requires) : null;
+  var testedV = tested ? parseVersion(tested) : null;
+  if (requires && requiresV === null) {
+    findings.push(errorF("version-format", "'Requires at least' is not a dotted version: " + pyRepr(requires)));
+  }
+  if (tested && testedV === null) {
+    findings.push(errorF("version-format", "'Tested up to' is not a dotted version: " + pyRepr(tested)));
+  }
+  if (requiresV !== null && testedV !== null) {
+    if (compareKeys(versionKey(testedV), versionKey(requiresV)) < 0) {
+      findings.push(errorF("tested-before-requires",
+        "'Tested up to' (" + tested + ") is older than 'Requires at least' (" + requires + ")"));
+    }
+  }
+  var php = headerOf(readme, "Requires PHP");
+  if (php && parseVersion(php) === null) {
+    findings.push(errorF("version-format", "'Requires PHP' is not a dotted version: " + pyRepr(php)));
+  }
+  return findings;
+}
+
+function checkTags(readme) {
+  var findings = [];
+  var tagsValue = headerOf(readme, "Tags");
+  if (tagsValue === null) {
+    findings.push(warningF("missing-header", "header 'Tags' is missing (up to 12 tags recommended)"));
+    return findings;
+  }
+  var tags = tagsValue.split(",").map(function(t) { return t.trim(); });
+  if (tags.some(function(t) { return !t; })) {
+    findings.push(errorF("tags-empty", "'Tags' contains an empty entry (check for a trailing comma)"));
+  }
+  tags = tags.filter(function(t) { return t; });
+  if (tags.length > MAX_TAGS) {
+    findings.push(errorF("tags-count",
+      "'Tags' has " + tags.length + " tags, wordpress.org allows at most " + MAX_TAGS));
+  }
+  var seen = {};
+  tags.forEach(function(tag) {
+    var lowered = tag.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(seen, lowered)) {
+      findings.push(errorF("tags-duplicate", "'Tags' repeats " + pyRepr(tag)));
+    }
+    seen[lowered] = true;
+  });
+  return findings;
+}
+
+function checkStableTag(readme) {
+  var findings = [];
+  var stable = headerOf(readme, "Stable tag");
+  if (!stable) return findings;
+  if (stable.indexOf("v") === 0 || stable.indexOf("V") === 0) {
+    findings.push(warningF("stable-tag-prefix",
+      "'Stable tag' starts with 'v' (" + pyRepr(stable) + "); use the bare version"));
+  }
+  var versions = changelogVersions(readme);
+  if (sectionIsEmpty(readme, "Changelog")) return findings;
+  var normalized = normalizeVersion(stable);
+  if (normalized.toLowerCase() === "trunk") {
+    if (!versions.some(function(v) { return v.trim().toLowerCase() === "trunk"; })) {
+      findings.push(warningF("stable-tag-trunk",
+        "'Stable tag' is 'trunk' but Changelog has no trunk entry"));
+    }
+    return findings;
+  }
+  var normalizedVersions = versions.map(function(v) { return normalizeVersion(v); });
+  if (normalizedVersions.indexOf(normalized) === -1) {
+    findings.push(errorF("stable-tag-not-in-changelog",
+      "'Stable tag' " + pyRepr(stable) + " has no matching entry in Changelog (found: " +
+      (versions.length ? versions.join(", ") : "none") + ")"));
+  }
+  return findings;
+}
+
+function checkSections(readme) {
+  var findings = [];
+  var specs = [
+    ["Description", "error"], ["Changelog", "error"], ["Installation", "warning"],
+    ["Frequently Asked Questions", "warning"], ["Screenshots", "warning"]
+  ];
+  specs.forEach(function(spec) {
+    if (sectionIsEmpty(readme, spec[0])) {
+      var make = spec[1] === "error" ? errorF : warningF;
+      findings.push(make("missing-section", "section '" + spec[0] + "' is missing or empty"));
+    }
+  });
+  var faq = sectionText(readme, "Frequently Asked Questions");
+  if (faq && faq.trim()) {
+    var hasQuestion = faq.split(/\r\n|\r|\n/).some(function(line) {
+      return SUBSECTION_RE.test(line.trim());
+    });
+    if (!hasQuestion) {
+      findings.push(warningF("faq-format", "'Frequently Asked Questions' has no '= Question =' entries"));
+    }
+  }
+  var screenshots = sectionText(readme, "Screenshots");
+  if (screenshots && screenshots.trim()) {
+    var numbers = screenshotNumbers(readme);
+    if (!numbers.length) {
+      findings.push(warningF("screenshots-format", "'Screenshots' has no numbered 'N. caption' entries"));
+    } else {
+      var expected = numbers.map(function(_, i) { return i + 1; });
+      var inOrder = numbers.every(function(n, i) { return n === expected[i]; });
+      if (!inOrder) {
+        findings.push(warningF("screenshots-numbering",
+          "'Screenshots' entries are not numbered 1, 2, 3 in order: " + numbers.join(", ")));
+      } else if (numbers.length !== new Set(numbers).size) {
+        findings.push(warningF("screenshots-numbering", "'Screenshots' repeats a screenshot number"));
+      }
+    }
+  }
+  var upgrade = sectionText(readme, "Upgrade Notice");
+  if (upgrade !== null && !upgrade.trim()) {
+    findings.push(warningF("missing-section", "section 'Upgrade Notice' is present but empty"));
+  }
+  var parsed = [];
+  changelogVersions(readme).forEach(function(v) {
+    if (normalizeVersion(v).toLowerCase() === "trunk") return;
+    var p = parseVersion(normalizeVersion(v));
+    if (p !== null) parsed.push([v, p]);
+  });
+  var keys = parsed.map(function(pair) { return versionKey(pair[1]); });
+  var sortedDesc = keys.slice().sort(function(a, b) { return compareKeys(b, a); });
+  var sameOrder = keys.length === sortedDesc.length &&
+    keys.every(function(k, i) { return compareKeys(k, sortedDesc[i]) === 0; });
+  if (!sameOrder) {
+    findings.push(warningF("changelog-order", "Changelog entries are not in newest-first order"));
+  }
+  return findings;
+}
+
+function checkLines(readme) {
+  var findings = [];
+  readme.lines.forEach(function(line, idx) {
+    if (line.length > MAX_LINE_LENGTH) {
+      findings.push(warningF("line-length",
+        "line " + (idx + 1) + " is " + line.length + " characters (over " + MAX_LINE_LENGTH + ")"));
+    }
+  });
+  return findings;
+}
+
+function validate(text, strict) {
+  var readme = parseReadme(text);
+  var findings = [];
+  findings = findings.concat(checkPluginName(readme));
+  findings = findings.concat(checkHeaders(readme));
+  findings = findings.concat(checkVersions(readme));
+  findings = findings.concat(checkTags(readme));
+  findings = findings.concat(checkStableTag(readme));
+  findings = findings.concat(checkSections(readme));
+  findings = findings.concat(checkLines(readme));
+  if (strict) {
+    findings.forEach(function(f) { if (f.severity === "warning") f.severity = "error"; });
+  }
+  var errors = 0, warnings = 0;
+  findings.forEach(function(f) { if (f.severity === "error") errors++; else warnings++; });
+  var status = errors ? "FAIL" : (warnings ? "WARN" : "PASS");
+  return { readme: readme, findings: findings, status: status, errors: errors, warnings: warnings };
+}
+
+function renderText(result) {
+  var lines = result.findings.map(function(f) {
+    return f.severity.toUpperCase() + " [" + f.rule + "]: " + f.message;
+  });
+  if (!result.findings.length) {
+    lines.push("OK: readme passes all checks");
+  } else {
+    lines.push(result.status + ": " + result.errors + " error(s), " + result.warnings + " warning(s)");
+  }
+  return lines.join("\n") + "\n";
+}
+
+window.runTool = function(inputText, options) {
+  options = options || {};
+  var strict = !!options.strict;
+  var result = validate(String(inputText == null ? "" : inputText), strict);
+  return renderText(result);
+};
+</script>
+<script>
+(function () {
+  var SAMPLE_TEXT = `=== Example Plugin ===
+Contributors: aamirtechs
+Donate link: https://example.com/donate
+Tags: forms, contact, spam, security
+Requires at least: 6.0
+Tested up to: 6.7
+Requires PHP: 7.4
+Stable tag: 1.2.0
+License: GPLv2 or later
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
+
+A small contact form plugin with spam protection.
+
+== Description ==
+
+Example Plugin adds a simple contact form to any page. It blocks
+common spam patterns without a captcha, and it stores nothing
+outside your own site.
+
+== Installation ==
+
+1. Upload the plugin folder to /wp-content/plugins/.
+2. Activate the plugin through the Plugins screen.
+3. Add the form with the [example-form] shortcode.
+
+== Frequently Asked Questions ==
+
+= Does it need a captcha? =
+
+No. It filters spam by pattern matching, so visitors never solve
+a puzzle.
+
+= Does it store submissions? =
+
+No. Messages are emailed and then discarded.
+
+== Screenshots ==
+
+1. The settings page.
+2. A form on a page.
+
+== Changelog ==
+
+= 1.2.0 =
+
+* Fixed a notice on PHP 8.2.
+* Added a honeypot field.
+
+= 1.1.0 =
+
+* First public release.
+
+== Upgrade Notice ==
+
+= 1.2.0 =
+
+Upgrade for the PHP 8.2 fix. No settings change is needed.
+`;
+  var inputEl = document.getElementById("input");
+  var outputEl = document.getElementById("output");
+  var downloadBtn = document.getElementById("download");
+  var fileName = "";
+  var lastReport = "";
+
+  document.getElementById("file").addEventListener("change", function (event) {
+    var file = event.target.files && event.target.files[0];
+    if (!file) return;
+    fileName = file.name;
+    var reader = new FileReader();
+    reader.onload = function () { inputEl.value = String(reader.result || ""); };
+    reader.readAsText(file);
+  });
+  document.getElementById("sample").addEventListener("click", function () {
+    inputEl.value = SAMPLE_TEXT;
+    fileName = "";
+  });
+  document.getElementById("run").addEventListener("click", function () {
+    var options = {
+      strict: document.getElementById("opt-strict").checked
+    };
+    lastReport = window.runTool(inputEl.value, options);
+    outputEl.textContent = lastReport;
+    downloadBtn.disabled = false;
+  });
+  downloadBtn.addEventListener("click", function () {
+    if (!lastReport) return;
+    var blob = new Blob([lastReport], { type: "text/plain;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = "wp-readme-doctor-report.txt";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  });
+})();
+</script>
+</body>
+</html>
